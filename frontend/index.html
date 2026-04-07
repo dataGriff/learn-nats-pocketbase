@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>☕ Coffee Shop Orders</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #fdf6ee;
+      color: #3b2f2f;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    h1 { font-size: 2rem; text-align: center; margin-bottom: 0.25rem; }
+    .subtitle { text-align: center; color: #7a5c3e; margin-bottom: 2rem; font-size: 0.9rem; }
+
+    .container { max-width: 900px; margin: 0 auto; display: grid; gap: 2rem; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 640px) { .container { grid-template-columns: 1fr; } }
+
+    /* --- Card --- */
+    .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+    .card h2 { font-size: 1.1rem; margin-bottom: 1rem; border-bottom: 2px solid #f0e0cc; padding-bottom: 0.5rem; }
+
+    /* --- Form --- */
+    .form-group { margin-bottom: 0.75rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; color: #5c4033; }
+    input, textarea { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d6c3b0; border-radius: 8px; font-size: 0.95rem; background: #fdf6ee; color: #3b2f2f; }
+    input:focus, textarea:focus { outline: none; border-color: #a0522d; }
+    textarea { resize: vertical; min-height: 60px; }
+    button.btn-primary {
+      width: 100%; padding: 0.6rem; background: #a0522d; color: #fff;
+      border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: 600;
+      transition: background 0.15s;
+    }
+    button.btn-primary:hover { background: #7a3e1f; }
+
+    /* --- Order list --- */
+    #orders-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .order-card {
+      border: 1px solid #f0e0cc; border-radius: 10px; padding: 0.75rem 1rem;
+      display: flex; flex-direction: column; gap: 0.4rem;
+      transition: box-shadow 0.2s;
+    }
+    .order-card.flash { box-shadow: 0 0 0 3px #a0522d55; }
+    .order-card .order-header { display: flex; justify-content: space-between; align-items: center; }
+    .order-card .customer { font-weight: 700; font-size: 1rem; }
+    .order-card .total { color: #7a5c3e; font-size: 0.9rem; }
+    .order-card .items { color: #5c4033; font-size: 0.85rem; }
+    .order-card .status-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.3rem; }
+
+    /* Status badge */
+    .badge {
+      display: inline-block; padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .badge-pending    { background: #fff3cd; color: #856404; }
+    .badge-preparing  { background: #cfe2ff; color: #084298; }
+    .badge-ready      { background: #d1e7dd; color: #0a3622; }
+    .badge-collected  { background: #e2e3e5; color: #41464b; }
+
+    /* Status update buttons */
+    .btn-status {
+      padding: 0.2rem 0.6rem; border-radius: 6px; border: 1px solid #d6c3b0;
+      font-size: 0.75rem; cursor: pointer; background: #fdf6ee; color: #3b2f2f;
+      transition: background 0.1s;
+    }
+    .btn-status:hover { background: #f0e0cc; }
+    .btn-status.active { background: #a0522d; color: #fff; border-color: #a0522d; }
+
+    /* Empty state */
+    .empty { color: #a08c7a; font-style: italic; text-align: center; padding: 1rem 0; }
+
+    /* Realtime indicator */
+    .realtime-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: #28a745; margin-right: 0.4rem; animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .realtime-label { font-size: 0.8rem; color: #7a5c3e; display: flex; align-items: center; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+
+<h1>☕ Coffee Shop Orders</h1>
+<p class="subtitle">Realtime order board – powered by PocketBase &amp; NATS</p>
+
+<div class="container">
+  <!-- Place Order Form -->
+  <div class="card">
+    <h2>🛒 Place New Order</h2>
+    <form id="order-form">
+      <div class="form-group">
+        <label for="customer_name">Customer name</label>
+        <input id="customer_name" type="text" placeholder="e.g. Alice" required />
+      </div>
+      <div class="form-group">
+        <label for="items">Items (one per line)</label>
+        <textarea id="items" placeholder="Flat White&#10;Blueberry Muffin" required></textarea>
+      </div>
+      <div class="form-group">
+        <label for="total">Total (£)</label>
+        <input id="total" type="number" step="0.01" min="0" placeholder="4.50" />
+      </div>
+      <button class="btn-primary" type="submit">Place Order →</button>
+    </form>
+  </div>
+
+  <!-- Live Order Board -->
+  <div class="card">
+    <h2>📋 Live Orders</h2>
+    <div class="realtime-label"><span class="realtime-dot"></span>Receiving realtime updates</div>
+    <br/>
+    <div id="orders-list">
+      <p class="empty">No orders yet – place one!</p>
+    </div>
+  </div>
+</div>
+
+<!-- PocketBase JS SDK (v0.26 – compatible with PocketBase v0.36) -->
+<script src="https://unpkg.com/pocketbase@0.26/dist/pocketbase.umd.js"></script>
+<script>
+  const pb = new PocketBase(window.location.origin.replace(/:\d+$/, ':8090'));
+
+  const STATUSES = ['pending', 'preparing', 'ready', 'collected'];
+
+  // ── State ──────────────────────────────────────────────────────────
+  let orders = []; // sorted newest-first
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function badgeClass(status) {
+    return `badge badge-${status}`;
+  }
+
+  function renderItems(raw) {
+    try {
+      const arr = Array.isArray(raw) ? raw : JSON.parse(raw);
+      return arr.join(', ');
+    } catch {
+      return String(raw);
+    }
+  }
+
+  function renderOrders() {
+    const list = document.getElementById('orders-list');
+    if (orders.length === 0) {
+      list.innerHTML = '<p class="empty">No orders yet – place one!</p>';
+      return;
+    }
+
+    list.innerHTML = orders.map(o => `
+      <div class="order-card" id="order-${o.id}">
+        <div class="order-header">
+          <span class="customer">${escapeHtml(o.customer_name)}</span>
+          <span class="total">${o.total ? '£' + Number(o.total).toFixed(2) : ''}</span>
+        </div>
+        <div class="items">${escapeHtml(renderItems(o.items))}</div>
+        <div class="status-row">
+          <span class="${badgeClass(o.status)}">${o.status}</span>
+          ${STATUSES.map(s => `
+            <button class="btn-status${s === o.status ? ' active' : ''}"
+                    onclick="updateStatus('${o.id}','${s}')"
+                    title="Mark as ${s}">${s}</button>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function flashOrder(id) {
+    const el = document.getElementById(`order-${id}`);
+    if (!el) return;
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 800);
+  }
+
+  // ── Load initial orders ────────────────────────────────────────────
+  async function loadOrders() {
+    try {
+      const result = await pb.collection('orders').getList(1, 50, {
+        sort: '-created',
+      });
+      orders = result.items;
+      renderOrders();
+    } catch (err) {
+      console.error('Failed to load orders:', err);
+    }
+  }
+
+  // ── Realtime subscription ──────────────────────────────────────────
+  async function subscribeToOrders() {
+    await pb.collection('orders').subscribe('*', function (e) {
+      if (e.action === 'create') {
+        orders.unshift(e.record);
+      } else if (e.action === 'update') {
+        const idx = orders.findIndex(o => o.id === e.record.id);
+        if (idx !== -1) orders[idx] = e.record;
+        else orders.unshift(e.record);
+      } else if (e.action === 'delete') {
+        orders = orders.filter(o => o.id !== e.record.id);
+      }
+      renderOrders();
+      flashOrder(e.record.id);
+    });
+  }
+
+  // ── Place order ────────────────────────────────────────────────────
+  document.getElementById('order-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const name  = document.getElementById('customer_name').value.trim();
+    const items = document.getElementById('items').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const total = parseFloat(document.getElementById('total').value) || 0;
+
+    try {
+      await pb.collection('orders').create({
+        customer_name: name,
+        items:         items,
+        status:        'pending',
+        total:         total,
+      });
+      ev.target.reset();
+    } catch (err) {
+      console.error('Failed to place order:', err);
+      alert('Could not place order: ' + (err.message || err));
+    }
+  });
+
+  // ── Update status ──────────────────────────────────────────────────
+  async function updateStatus(id, status) {
+    try {
+      await pb.collection('orders').update(id, { status });
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      alert('Could not update status: ' + (err.message || err));
+    }
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────────
+  (async () => {
+    await loadOrders();
+    await subscribeToOrders();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# PocketBase data directory
+pb_data/
+
+# Go build artifacts
+/tmp/
+
+# Docker volumes
+*.tar
+
+# OS
+.DS_Store
+Thumbs.db
